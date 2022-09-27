@@ -1,0 +1,442 @@
+---
+title: "Factor Analysis with female body mass"
+author: "Maria Novosolov"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    theme: united
+    highlight: tango
+    code_folding: show
+    code_download: true
+    font: FiraCode
+---
+
+Load the libraries
+```{r}
+knitr::opts_knit$set(root.dir =  rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(tidyverse,vegan,GPArotation,psych,MASS,factoextra,cluster,fpc,FactoMineR,cowplot,broom,modelr,psy)
+
+```
+
+### Create the curated dataset
+
+Log transform what is needed and select the needed columns
+```{r}
+source("scripts/theme_geometry.R")
+tetrapod_data<- readr::read_csv("data/Tetrapod life history database for maria 31.1.20.csv") %>% 
+  drop_na() %>% 
+  mutate(log_longevity = log10(Max_Longevity),
+         log_clutch = log10(Clutch_Litter_size),
+         log_breading_age = log10(Mean_age_at_breeding),
+         log_brood = log10(Maximum_Broods_per_year))
+
+tetrapod_data<- tetrapod_data %>% 
+  dplyr::select(Class, Log_Female_Mass, log_longevity,log_clutch,log_breading_age,log_brood,Log_Hatchling_Mass)
+
+head(tetrapod_data)
+
+```
+
+Running the FA model and extracting the factors for 1,2, and 3 factors. And running the MFA model
+Storing everything in a nested dataset
+```{r}
+#create a nested dataset with all the tetrapods
+all_tetra_nest<- tetrapod_data %>% 
+  dplyr::select(-Class) %>% 
+  nest() %>%
+  add_column(Class = "Tetrapods",.before = 1)
+
+#create a nested dataset by class, add the whole tetrapods and map the models into them
+tetrapod_nested<- tetrapod_data %>%
+  nest(-Class) %>%
+  bind_rows(all_tetra_nest) %>% 
+  mutate(model.fa1 = map(data, function(df) factanal(df,1,rotation="varimax",scores = "regression"))) %>% 
+  mutate(model.fa2 = map(data, function(df) factanal(df,2,rotation="varimax",scores = "regression"))) %>% 
+  mutate(model.fa3 = map(data, function(df) factanal(df,3,rotation="varimax",scores = "regression"))) %>%
+  mutate(model.mfa = map(data, function (df) MFA(df,group = c(1,1,1,1,1,1), type=c(rep("s",1),rep("s",1),rep("s",1),rep("s",1),rep("s",1),rep("s",1)),name.group = c("Body Size","Longevity","Clutch size","Age at breeding","Brood freq","Hatchling mass"),
+                                                 ncp = 5,graph = F))) %>% 
+  group_by(Class) %>% 
+  mutate(model.fa1.r = map(model.fa1, function(model) broom::tidy(model)), 
+         model.fa2.r = map(model.fa2, function(model) broom::tidy(model)),
+         model.fa3.r = map(model.fa3, function(model) broom::tidy(model))) %>% 
+  mutate(model.fa1.r = map(model.fa1.r, function (df) mutate(df, com.var = 1 - uniqueness)),
+         model.fa2.r = map(model.fa2.r, function (df) mutate(df, com.var = 1 - uniqueness)),
+         model.fa3.r = map(model.fa3.r, function (df) mutate(df, com.var = 1 - uniqueness))) %>% 
+  mutate(mfa.coord = map(model.mfa,function(mfa) mfa$quanti.var$coord[,1:3]))
+
+# check the data
+tetrapod_nested
+```
+
+## Mammals {.tabset}
+
+### Multiple Factor Analysis (MFA)
+
+Create the subset dataset
+
+```{r}
+mammals<- tetrapod_nested %>% 
+  filter(Class == "Mammalia")
+```
+
+Check the percentage for each axis in the MFA 
+```{r}
+map(mammals$model.mfa,~fviz_screeplot(.))
+```
+
+We see that the first dimention explain most of the variation so we will plot the first and the second.
+Now we will explore the results. 
+
+First lets see how they disperse in space
+```{r}
+map(mammals$model.mfa,~fviz_mfa_var(., "quanti.var", palette = "jco", 
+             col.var.sup = "violet", repel = TRUE,
+             geom = c("point", "text"), legend = "none",title = "Mammals"))
+```
+
+Explore the contribution of each trait to the axes
+```{r}
+#the contribution of the first axis
+pm1<- map(mammals$model.mfa,~fviz_contrib(., "group", axes = 1,title= "Contribution of traits to first axis-mammals"))
+pm2<- map(mammals$model.mfa,~fviz_contrib(., "group", axes = 2,title= "Contribution of traits to second axis-mammals"))
+gm1<- plot_grid(pm1[[1]],pm2[[1]],labels = c("A","B"))
+gm1
+
+```
+
+Plot each point and color it based on its quality of representation 
+```{r}
+map(mammals$model.mfa,~fviz_mfa_ind(., col.ind = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE,label = "none"))
+```
+
+
+### Factor Analysis with factanal function
+
+#### Exploratory power
+
+We can see that in all the factors it's quite strong exploratory power.
+We can use the parallel analysis to see how many factors we should use. You see that by looking at where the blue line (the actual data) breaks and where the difference between the blue line and the red line (simulated data) is the smallest. Based on this three might be more sutible but it has 0 degrees of freedom so we will take **Two Factors**. 
+
+```{r}
+parallel <- fa.parallel(mammals$data[[1]], fm = 'ml', fa = 'fa')
+```
+
+
+**The results for Three factors**
+
+The common variance (column com.var) shows how much of the variance is shared between a specific variable and the rest of the variables. The larger the number the more informative the variable.
+
+```{r}
+knitr::kable(print(mammals$model.fa2.r))
+```
+
+#### Factor analysis plot
+
+```{r}
+ggplot(mammals$model.fa2.r[[1]],aes(fl1,fl2))+
+  theme_geometry(mammals$model.fa2.r[[1]]$fl1,mammals$model.fa2.r[[1]]$fl2)+
+  geom_point()+
+  geom_text(aes(label=variable),hjust=0.5, vjust=-1)
+```
+
+## Birds {.tabset}
+
+### Multiple Factor Analysis (MFA)
+
+Create the subset dataset
+
+```{r}
+birds<- tetrapod_nested %>% 
+  filter(Class == "Aves")
+```
+
+Check the percentage for each axis in the MFA 
+```{r}
+map(birds$model.mfa,~fviz_screeplot(.))
+```
+
+We see that the first dimention explain most of the variation so we will plot the first and the second.
+Now we will explore the results. 
+
+First lets see how they disperse in space
+```{r}
+map(birds$model.mfa,~fviz_mfa_var(., "quanti.var", palette = "jco", 
+             col.var.sup = "violet", repel = TRUE,
+             geom = c("point", "text"), legend = "none",title = "Birds"))
+```
+
+Explore the contribution of each trait to the axes
+```{r}
+#the contribution of the first axis
+pm1<- map(birds$model.mfa,~fviz_contrib(., "group", axes = 1,title= "Contribution of traits to first axis-mammals"))
+pm2<- map(birds$model.mfa,~fviz_contrib(., "group", axes = 2,title= "Contribution of traits to second axis-mammals"))
+gm1<- plot_grid(pm1[[1]],pm2[[1]],labels = c("A","B"))
+gm1
+
+```
+
+Plot each point and color it based on its quality of representation 
+```{r}
+map(birds$model.mfa,~fviz_mfa_ind(., col.ind = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE,label = "none"))
+```
+
+
+### Factor Analysis with factanal function
+
+#### Exploratory power
+
+We can see that in all the factors it's quite strong exploratory power.
+We can use the parallel analysis to see how many factors we should use. In our case it's **Two Factors**
+
+```{r}
+parallel <- fa.parallel(birds$data[[1]], fm = 'ml', fa = 'fa')
+```
+
+
+**The results for Two factors**
+
+The common variance (column com.var) shows how much of the variance is shared between a specific variable and the rest of the variables. The larger the number the more informative the variable.
+
+```{r}
+knitr::kable(print(birds$model.fa2.r))
+```
+
+#### Factor analysis plot
+
+```{r}
+ggplot(birds$model.fa2.r[[1]],aes(fl1,fl2))+
+  theme_geometry(birds$model.fa2.r[[1]]$fl1,birds$model.fa2.r[[1]]$fl2)+
+  geom_point()+
+  geom_text(aes(label=variable),hjust=0.5, vjust=-1)
+```
+
+
+## Reptiles {.tabset}
+
+### Multiple Factor Analysis (MFA)
+
+Create the subset dataset
+
+```{r}
+reptiles<- tetrapod_nested %>% 
+  filter(Class == "Reptilia")
+```
+
+Check the percentage for each axis in the MFA 
+```{r}
+map(reptiles$model.mfa,~fviz_screeplot(.))
+```
+
+We see that the first dimention explain most of the variation so we will plot the first and the second.
+Now we will explore the results. 
+
+First lets see how they disperse in space
+```{r}
+map(reptiles$model.mfa,~fviz_mfa_var(., "quanti.var", palette = "jco", 
+             col.var.sup = "violet", repel = TRUE,
+             geom = c("point", "text"), legend = "none",title = "Reptiles"))
+```
+
+Explore the contribution of each trait to the axes
+```{r}
+#the contribution of the first axis
+pm1<- map(reptiles$model.mfa,~fviz_contrib(., "group", axes = 1,title= "Contribution of traits to first axis-mammals"))
+pm2<- map(reptiles$model.mfa,~fviz_contrib(., "group", axes = 2,title= "Contribution of traits to second axis-mammals"))
+gm1<- plot_grid(pm1[[1]],pm2[[1]],labels = c("A","B"))
+gm1
+
+```
+
+Plot each point and color it based on its quality of representation 
+```{r}
+map(reptiles$model.mfa,~fviz_mfa_ind(., col.ind = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE,label = "none"))
+```
+
+
+### Factor Analysis with factanal function
+
+#### Exploratory power
+
+We can see that in all the factors it's quite strong exploratory power.
+We can use the parallel analysis to see how many factors we should use. In our case it's **Two Factors**
+
+```{r}
+parallel <- fa.parallel(reptiles$data[[1]], fm = 'ml', fa = 'fa')
+```
+
+
+**The results for Two factors**
+
+The common variance (column com.var) shows how much of the variance is shared between a specific variable and the rest of the variables. The larger the number the more informative the variable.
+
+```{r}
+knitr::kable(print(reptiles$model.fa2.r))
+```
+
+#### Factor analysis plot
+
+```{r}
+ggplot(reptiles$model.fa2.r[[1]],aes(fl1,fl2))+
+  theme_geometry(reptiles$model.fa2.r[[1]]$fl1,reptiles$model.fa2.r[[1]]$fl2)+
+  geom_point()+
+  geom_text(aes(label=variable),hjust=0.5, vjust=-1)
+```
+
+## Amphibians {.tabset}
+
+### Multiple Factor Analysis (MFA)
+
+Create the subset dataset
+
+```{r}
+amph<- tetrapod_nested %>% 
+  filter(Class == "Amphibia")
+```
+
+Check the percentage for each axis in the MFA 
+```{r}
+map(amph$model.mfa,~fviz_screeplot(.))
+```
+
+We see that the first dimention explain most of the variation so we will plot the first and the second.
+Now we will explore the results. 
+
+First lets see how they disperse in space
+```{r}
+map(amph$model.mfa,~fviz_mfa_var(., "quanti.var", palette = "jco", 
+             col.var.sup = "violet", repel = TRUE,
+             geom = c("point", "text"), legend = "none",title = "Amphibians"))
+```
+
+Explore the contribution of each trait to the axes
+```{r}
+#the contribution of the first axis
+pm1<- map(amph$model.mfa,~fviz_contrib(., "group", axes = 1,title= "Contribution of traits to first axis-mammals"))
+pm2<- map(amph$model.mfa,~fviz_contrib(., "group", axes = 2,title= "Contribution of traits to second axis-mammals"))
+gm1<- plot_grid(pm1[[1]],pm2[[1]],labels = c("A","B"))
+gm1
+
+```
+
+Plot each point and color it based on its quality of representation 
+```{r}
+map(amph$model.mfa,~fviz_mfa_ind(., col.ind = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE,label = "none"))
+```
+
+
+### Factor Analysis with factanal function
+
+#### Exploratory power
+
+We can see that in all the factors it's quite strong exploratory power.
+We can use the parallel analysis to see how many factors we should use. In our case it's **Two Factors**
+
+```{r}
+parallel <- fa.parallel(amph$data[[1]], fm = 'ml', fa = 'fa')
+```
+
+
+**The results for Two factors**
+
+The common variance (column com.var) shows how much of the variance is shared between a specific variable and the rest of the variables. The larger the number the more informative the variable.
+
+In here you see that some of the variables don't add much to the model (com.var is low)
+
+```{r}
+knitr::kable(print(amph$model.fa2.r))
+```
+
+#### Factor analysis plot
+
+```{r}
+ggplot(amph$model.fa2.r[[1]],aes(fl1,fl2))+
+  theme_geometry(amph$model.fa2.r[[1]]$fl1,amph$model.fa2.r[[1]]$fl2)+
+  geom_point()+
+  geom_text(aes(label=variable),hjust=0.5, vjust=-1)
+```
+
+
+## All tetrapods {.tabset}
+
+### Multiple Factor Analysis (MFA)
+
+Create the subset dataset
+
+```{r}
+all.tetrapods<- tetrapod_nested %>% 
+  filter(Class == "Tetrapods")
+```
+
+Check the percentage for each axis in the MFA 
+```{r}
+map(all.tetrapods$model.mfa,~fviz_screeplot(.))
+```
+
+We see that the first dimention explain most of the variation so we will plot the first and the second.
+Now we will explore the results. 
+
+First lets see how they disperse in space
+```{r}
+map(all.tetrapods$model.mfa,~fviz_mfa_var(., "quanti.var", palette = "jco", 
+             col.var.sup = "violet", repel = TRUE,
+             geom = c("point", "text"), legend = "none",title = "All tetrapods"))
+```
+
+Explore the contribution of each trait to the axes
+```{r}
+#the contribution of the first axis
+pm1<- map(all.tetrapods$model.mfa,~fviz_contrib(., "group", axes = 1,title= "Contribution of traits to first axis-mammals"))
+pm2<- map(all.tetrapods$model.mfa,~fviz_contrib(., "group", axes = 2,title= "Contribution of traits to second axis-mammals"))
+gm1<- plot_grid(pm1[[1]],pm2[[1]],labels = c("A","B"))
+gm1
+
+```
+
+Plot each point and color it based on its quality of representation 
+```{r}
+map(all.tetrapods$model.mfa,~fviz_mfa_ind(., col.ind = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE,label = "none"))
+```
+
+
+### Factor Analysis with factanal function
+
+#### Exploratory power
+
+We can see that in all the factors it's quite strong exploratory power.
+We can use the parallel analysis to see how many factors we should use. In our case it's **Two Factors**
+
+```{r}
+parallel <- fa.parallel(all.tetrapods$data[[1]], fm = 'ml', fa = 'fa')
+```
+
+
+**The results for Two factors**
+
+The common variance (column com.var) shows how much of the variance is shared between a specific variable and the rest of the variables. The larger the number the more informative the variable.
+
+```{r}
+knitr::kable(print(all.tetrapods$model.fa2.r))
+```
+
+#### Factor analysis plot
+
+```{r}
+ggplot(all.tetrapods$model.fa2.r[[1]],aes(fl1,fl2))+
+  theme_geometry(all.tetrapods$model.fa2.r[[1]]$fl1,all.tetrapods$model.fa2.r[[1]]$fl2)+
+  geom_point()+
+  geom_text(aes(label=variable),hjust=0.5, vjust=-1)
+```
