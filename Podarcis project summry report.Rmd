@@ -1,0 +1,378 @@
+---
+title: "Podarcis project summary report"
+author: "Maria Novosolov"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    theme: united
+    highlight: tango
+    code_folding: hide
+    code_download: true
+    font: FiraCode
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ape)
+library(phytools)
+library(gtools)
+nnorm <- function(x) x/sum(x)
+source(here::here("scripts/plot_realSFS_function.R"))
+source(here::here("scripts/plot_PCAngsd_function.R"))
+source(here::here("scripts/EvoTree_ibsMat_function.R"))
+source(here::here("scripts/fst_peak_search_rasmusAlgo_function.R"))
+source(here::here("scripts/read_abba_baba_data_function.R"))
+source(here::here("scripts/getDstat3pop_function.R"))
+pop_data<- read_csv(here::here("data/pop_data_with_bamNames.csv"),col_select = -1)
+cols.ps <- c("#E69F00", "#56B4E9","#136d15")
+pop_data2<- read_csv(here::here("data/pop_data_with_bamNames.csv"),col_select = -1) %>% 
+  select(ngi_id,island)
+
+pop_data2<- rbind(pop_data2,c("SRR14009399_1","Pmelis"))
+```
+
+# Project summary
+
+In 1971 a reciprocal introduction was done between Pod Kopiste island and Pod Mrcaru island in the the South Adriatic Sea. Ten individuals of *Podarcis siculus* were relocated from Pod Kopiste to Pod Mrcaru, and 10 individuals of *Podarcis melisellensis* were relocated from Pod Mrcaru to Pod Kopiste. Both islands were inhibited only by the source species at the time - *P. siculus* on Pod Kopiste and *P. melisellensis* on Pod Mrcaru.
+
+After ~35 years researchers came back to the islands and witnessed drastic morphological changes between *P. siculus* on Pod Kopiste, and *P. siculus* on Pod Mrcaru. 
+To link the genomics with the phenotypic observation we sequenced 47 individuals of *P. siculus* from each island.
+This report presents the sequence coverage for the whole genome and the mitoGenome, and basic exploratory analyses.
+
+In all the plots **K** (Orange) represents the Pod Kopiste population (the source) and **M** (Blue) represents to Pod Mrcaru population (the relocated population).
+
+# Data summary
+
+## Data quality
+
+### Coverage
+```{r fig.height=6, fig.width=12, message=FALSE, warning=FALSE}
+Cov<- read_csv(here::here("data/coverage_summary_130120.csv")) %>% 
+  filter(!is.na(sample_name)) %>% 
+  mutate(real_sample = fct_inorder(real_sample))
+ggplot(Cov,aes(real_sample,mean_coverage,fill=island))+
+  geom_col(position = "dodge")+
+  scale_fill_manual(values=c("#E69F00", "#56B4E9"))+
+  theme_bw()+
+  theme(axis.ticks.x=element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 15),
+        legend.title = element_text(size = 15),
+        axis.text.x = element_text(angle=90, vjust = 0.5),
+        axis.text.y = element_text(size = 15),
+        strip.text.x = element_text(size = 15,face="bold"),
+        axis.title.x = element_text(size = 15),
+        axis.title.y = element_text(size = 15))+
+  labs(y = "Coverage (X)", x = "sample",fill = "Sample Island:")
+```
+
+### Error rate 
+
+![](/Users/rlw363/Dropbox/Maria Research/Collaborations/P. siculus genomics (A. Herrel, Anamarka, Morten, Rasmus)/Podarcis_siculus_mapping/plots/error_rate_PS_ref_190521_plotsOverall.png)
+
+
+### LD decay
+
+```{r fig.align="center", fig.width=22, message=FALSE, warning=FALSE, out.width="100%"}
+knitr::include_graphics(here::here("plots/plot_popK_popM_ngsLD.pdf"),dpi = 300)
+```
+
+## SFS plots
+```{r fig.height=6, fig.width=11, message=FALSE, warning=FALSE}
+par(mfrow=c(1,2))
+p_realSFS(data_path = "data/angsd/popK_NoIntrogres_noRelated_LargeScaf_noSex_withDepth_150921.saf.sfs",pop_name = "PopK",main = "PopK noIntrogressed individuals")
+
+p_realSFS(data_path = "data/angsd/popM_NoIntorgres_LargeScaf_noSex_withhDepth_150921.saf.sfs",pop_name = "PopM",main = "PopM noIntrogressed individuals")
+```
+
+# PCA
+
+```{r fig.height=7, fig.width=7, message=FALSE, warning=FALSE}
+PCAngsd_prop_table(data_path = "data/PCA_All_snpPval_LargeScaf_noSex_beagle_withDepth_190321.cov")
+
+pca.minmaf<- plot_PCAngsd(data_file = "data/PCA_All_snpPval_LargeScaf_noSex_beagle_withDepth_190321.cov",var_data = pop_data,var_names = c("user_id","island"),plot_cols = cols.ps,pc_to_plot = c("PC1","PC2"))+
+  xlab("PC1 (5.6%)")+
+  ylab("PC2 (1.3%)")
+pca.minmaf+
+  geom_point(size = 4)
+plotly::ggplotly(pca.minmaf)
+###pdf("plots/pca_res_new.pdf")
+###pca.minmaf+
+###  geom_point(size = 4)
+###dev.off()
+```
+
+# IBS tree 
+
+```{r fig.height=12, fig.width=6, message=FALSE, warning=FALSE}
+plot_ibsTree(data_file = "data/ibs_All_snpPval_LargeScaf_noSex_withDepth_190321.ibsMat",col.nam = pop_data$user_id,color = cols.ps,pop.data = pop_data,root = T)
+```
+
+# Relatedness
+
+## PopK
+```{r fig.height=8, fig.width=10, message=FALSE, warning=FALSE}
+ngsR_popK_data<- read_delim(here::here("data/res_ngsRelate_popK_minmaf_100K_noSex_210321"),delim = "\t") %>% 
+  janitor::clean_names()
+
+popK_data<- pop_data %>%
+  filter(island=="K") %>% 
+  select(user_id) %>% 
+  mutate(seq_name = seq(0,45))
+
+ngsRelate.popK<-  ngsR_popK_data %>% 
+  left_join(popK_data,by=c("a"="seq_name")) %>% 
+  dplyr::rename(ind1=user_id) %>%
+  left_join(popK_data,by=c("b"="seq_name")) %>% 
+  dplyr::rename(ind2=user_id) %>% 
+  relocate(ind1,ind2)
+
+inbredF2<- ngsRelate.popK %>% 
+  select(a,b,ind1,ind2,rab) %>% 
+  mutate(ind1=naturalsort::naturalfactor(ind1)) %>% 
+  mutate(ind2=naturalsort::naturalfactor(ind2)) %>% 
+  mutate(pair = paste(ind1,ind2,sep="_")) 
+
+ngs.p4<- ggplot(inbredF2,aes(ind1,ind2,fill= rab,label = pair))+
+  geom_tile()+
+  theme_minimal()+
+  scale_fill_viridis_c(name = "")+
+  theme(legend.position = "bottom")
+plotly::ggplotly(ngs.p4)
+```
+
+## PopM
+```{r fig.height=8, fig.width=10, message=FALSE, warning=FALSE}
+ngsR_popM_data<- read_delim(here::here("data/res_ngsRelate_popM_minmaf_100K_noSex_210321"),delim = "\t") %>% 
+  janitor::clean_names()
+
+popM_data<- pop_data %>%
+  filter(island=="M") %>% 
+  select(user_id) %>% 
+  mutate(seq_name = seq(0,47))
+
+ngsRelate.popM<-  ngsR_popM_data %>% 
+  left_join(popM_data,by=c("a"="seq_name")) %>% 
+  dplyr::rename(ind1=user_id) %>%
+  left_join(popM_data,by=c("b"="seq_name")) %>% 
+  dplyr::rename(ind2=user_id) %>% 
+  relocate(ind1,ind2)
+
+inbred_popM_F2<- ngsRelate.popM %>% 
+  select(a,b,ind1,ind2,rab) %>% 
+  mutate(ind1=naturalsort::naturalfactor(ind1)) %>% 
+  mutate(ind2=naturalsort::naturalfactor(ind2)) %>% 
+  mutate(pair = paste(ind1,ind2,sep="_")) 
+
+ngs.p4.popM<- ggplot(inbred_popM_F2,aes(ind1,ind2,fill= rab,label = pair))+
+  geom_tile()+
+  theme_minimal()+
+  scale_fill_viridis_c(name = "")+
+  theme(legend.position = "bottom")
+plotly::ggplotly(ngs.p4.popM)
+```
+
+
+The analyses found the following individuals as related (individuals in bold were removed from introgression analyses):
+
+ **K3** - K35
+
+ **K3** - K41
+
+ **K18** - K45
+
+ K7 - **K39**
+
+ **K24** - K29
+
+
+# Admixture
+
+We ran admixture using NGSAdmix to analyse how many clusters can be seen among the two populations, excluding the related individuals from PopK. Presented here are results for K=2, K=3 and K=4. There is no quantitative method of choosing the correct K. However, K=2 shows a clear divission between the two populations. K=3 adds another admixture (green) which might represent *P. melisellensis*, however, it does not align with the results from ABBA-BABA (see bellow).
+
+
+```{r fig.align="center", fig.width=22, message=FALSE, warning=FALSE, out.width="100%"}
+knitr::include_graphics(here::here("plots/pong_k2_4_admix.png"),dpi = 300)
+```
+
+# ABBA-BABA
+
+```{r message=FALSE, warning=FALSE}
+PS_Pmelis_ref<- read_delim(here::here("data/abbababa_with_Pmlis_orig_jaknif.txt"),delim="\t",col_select = -10) %>% 
+  #update the names to fit the names in the popdata file
+  mutate(H1 = str_extract(H1,"[^_]*_[^_]*"),H2 = str_extract(H2,"[^_]*_[^_]*"),H3 = str_extract(H3,"[^_]*_[^_]*"))
+#create a vector that holds the islands
+locIdx_PS<- pop_data2$island
+#name it with the ind names that fit the abbababa data
+names(locIdx_PS)<- pop_data2$ngi_id
+```
+
+```{r fig.height=10, fig.width=8, message=FALSE, warning=FALSE}
+#create a matrix that we will use to generate data for popK with popM as an outgroup in group
+group_popK<- matrix(c(rep("K",2), "Pmelis"),ncol=3, byrow=T)
+
+#run the function that renames all the file and keep only the rows that fit the fixed group setting
+dstatFixH1H2PopKChangeH3 <- do.call(rbind,apply(group_popK, 1, getDstat3pop, dstatdf=PS_Pmelis_ref,locIdx = locIdx_PS))
+leg_scale_popK<-max(c(abs(min(dstatFixH1H2PopKChangeH3$Z)),abs(max(dstatFixH1H2PopKChangeH3$Z))))
+
+plot.PKPK<- plot.data.same.pop(dstatFixH1H2PopKChangeH3,title = "PopK H1, PopK H2, Pmelis H3, Pmur H4, PS ref")
+plotly::ggplotly(plot.PKPK)
+```
+
+```{r fig.height=10, fig.width=8, message=FALSE, warning=FALSE}
+#create the same for popM
+group_popM<- matrix(c(rep("M",2), "Pmelis"),ncol=3, byrow=T)
+#do the same for popM as a set group
+dstatFixH1H2PopMChangeH3 <- do.call(rbind,apply(group_popM, 1, getDstat3pop, dstatdf=PS_Pmelis_ref,locIdx = locIdx_PS))
+leg_scale_popM<-max(c(abs(min(dstatFixH1H2PopMChangeH3$Z)),abs(max(dstatFixH1H2PopMChangeH3$Z))))
+
+plot.PMPM<- plot.data(dstatFixH1H2PopMChangeH3,title = "PopM H1, PopM H2, Pmelis H3, Pmur H4, PS ref")
+plotly::ggplotly(plot.PMPM)
+```
+
+
+## Between population F*st*
+
+The F*st* value between the two populations is **0.034475**
+
+# Fst scans
+
+## Manhattan plot
+
+```{r fig.height=6, fig.width=10, message=FALSE, warning=FALSE}
+fst_angsd<- read_delim(here::here("data/popK_popM_slidingWindow_fst_LargeScaf_noM48_nowhichfst_071221"),delim = "\t",col_names = F,skip = 1,col_select = -1) %>% 
+  dplyr::rename(chr = X2,midpoint = X3, nsites = X4,PK_PM_fst = X5) %>% 
+  mutate(cum_mid = cumsum(midpoint))
+# calculate the threshold for outliers and the outliers
+my_threshold.uw <- quantile(fst_angsd$PK_PM_fst, 0.995, na.rm = T)
+
+fst_angsd_outlier<- fst_angsd %>% 
+  mutate(outlier.uw = ifelse(PK_PM_fst > my_threshold.uw, "outlier", "background"))
+
+outlier_table<- fst_angsd_outlier %>% 
+  group_by(outlier.uw) %>% 
+  tally()
+
+knitr::kable(outlier_table,align = 'c')
+# outlier plot
+ggplot(fst_angsd_outlier,aes(cum_mid/10000000,PK_PM_fst,color = outlier.uw))+
+  geom_point(alpha = 0.75)+
+  theme_minimal()+
+  theme(legend.position = "none")+
+  scale_color_manual(values = c("#000000","#E4572E"))+
+  geom_hline(yintercept = my_threshold.uw,lty = 2)+
+  xlab("Gbp")+
+  ylab("Fst")
+```
+
+## Fst peaks
+```{r fig.height=6, fig.width=10, message=FALSE, warning=FALSE}
+chr.data<- read_delim(here::here("data/above_100kb_noSex_scaff_list.csv"),delim = ",") 
+
+fst_high<- fst_angsd_outlier$PK_PM_fst
+
+true_peak<- fst_peaks(fst_high,limits = c(0.26,0.21))
+
+knitr::kable(fst_angsd_outlier %>% 
+  mutate(peak = case_when(PK_PM_fst%in%true_peak$fst_val~"peak",TRUE~"not_peak")) %>% 
+  group_by(peak) %>% 
+  tally())
+
+fst_peak_plot<- fst_angsd_outlier %>% 
+  mutate(peak = case_when(PK_PM_fst%in%true_peak$fst_val~"peak",TRUE~"not_peak")) %>% 
+  ggplot(aes(cum_mid/10000000,PK_PM_fst,color = peak,size = peak))+
+  geom_point(alpha = 0.75)+
+  theme_minimal()+
+  theme(legend.position = "none")+
+  scale_color_manual(values = c("#000000","#960202"))+
+  geom_hline(yintercept = my_threshold.uw,lty = 2)+
+  xlab("Gbp")+
+  ylab("Fst")
+
+####jpeg("plots/fst_peaks_plot2.jpeg",width = 40,height = 30,res = 200)
+####fst_peak_plot
+####dev.off()
+```
+
+# BLAST results
+
+Here are the three localities with the highest Fst between the populations with the genes that area codes for and what this gene might be related to.
+
+```{r message=FALSE, warning=FALSE}
+knitr::kable(read_csv(here::here("data/forR_peaks_fst_outliers_RN_Method_091221_2.csv")) %>% 
+  slice(1:3) %>% 
+  select(4,10,11,12,13) %>% 
+    rename(trans_id = lifted_clean.gff_res))
+```
+
+# Demographic modeling
+
+The model that we focused on assumes that there is some introgression from a ghost population in both of the populations that happened after the bottleneck. This is the model we used:
+
+![](/Users/rlw363/Dropbox/Maria Research/Collaborations/P. siculus genomics (A. Herrel, Anamarka, Morten, Rasmus)/Podarcis_siculus_mapping/plots/Demographic_model.png)
+
+The idea was to calculate the migration and population values that are closest to the reality as we know it and let the optimization to adjust the values to get the most likely model.
+
+We checked whether the model gives a good estimation by comparing the true F*st* values with the modeled F*st* values. This is what we got:
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+df.fst<- as.data.frame(matrix(data = NA,ncol = 4,nrow = 3))
+row.n<- c("observed","modelled_C100","modelled_C10")
+names(df.fst)<- c("X1","FstSS","FstW","FstU")
+df.fst$X1<- row.n
+
+source(here::here("scripts/functions_for_fst_from_2dSFS.R"))
+##### Model Fst C100 #######
+full<-scan(here::here("data/model98_MSFS.txt"),skip = 2)
+fullM<-matrix(full, ncol=95, nrow=85, byrow=T)
+fullM[1:5,1:5]
+org.fst.model<- getFst(fullM)
+df.fst[2,2]<- org.fst.model
+rey.fst<- getReynoldsFst(fullM)
+str(rey.fst)
+df.fst[2,3]<- rey.fst[[1]]
+df.fst[2,4]<- rey.fst[[2]]
+
+##### Model Fst C10 #####
+full<-scan(here::here("data/model99_MSFS.txt"),skip = 2)
+fullM<-matrix(full, ncol=95, nrow=85, byrow=T)
+fullM[1:5,1:5]
+org.fst.model<- getFst(fullM)
+df.fst[3,2]<- org.fst.model
+rey.fst<- getReynoldsFst(fullM)
+str(rey.fst)
+df.fst[3,3]<- rey.fst[[1]]
+df.fst[3,4]<- rey.fst[[2]]
+
+##### True Fst #####
+true.data<- scan(here::here("data/popK.popM_2dsfs_LargeScaf_noRelateTRUE_noM48_230222.ml"))
+true.data.m<- matrix(true.data, ncol=95, nrow=85, byrow=T)
+true.data.m[1:5,1:5]
+true.data.unflat<- unflaten_matrix(true.data,dims = c(95,85))
+true.data.unflat[1:5,1:5]
+
+obs.fst.org<- getFst(true.data.m)
+getFst(true.data.unflat)
+
+rey.fst.obs<- getReynoldsFst(true.data.m)
+
+df.fst[1,2]<- obs.fst.org
+df.fst[1,3]<- rey.fst.obs[[1]]
+df.fst[1,4]<- rey.fst.obs[[2]]
+
+```
+
+```{r}
+knitr::kable(df.fst)
+```
+
+
+The new values were then used to generate SNPs from 100,000bp simulated DNA fragments for each population. These SNPs were used to calculate the 2dSFS. This was repeated 1,000 and compared to the true F*st* peak values we found in the F*st* scan. This part is giving some unexpected results and we are still in the process of troubleshooting the problem.
+
+# Future planes
+
+The plane now is to write the MS that will focus on our Fst scan based genetic findings and the introgression. Once that is done, we plan to work on the various museum samples that we have to see the change in the genetic composition over time.
