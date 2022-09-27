@@ -111,8 +111,9 @@ phylo.betapart.core.w<-function(x, tree)
   # ORIGINAL LINE .. SLOWER ..labcomb <-  apply(combin,2,function(x) paste(rownames(com)[x],collapse="-"))
   print('computing PD for each community of the community matrix')
   # pd <-  pdnew(com,tree)[,"PD"] # PD for each community of the community matrix
+#### New code Chunk #####
   pd <-  PhyloMeasures::pd.query(tree,com,standardize = T) # PD for each community of the community matrix using a quicker pd measure
-  
+#### end of New Code Chunk ####
   #     com.tot.pair.old <- t(apply(combin,2,function(x) { # SPEEDUP 2
   #       colSums(com[x,])>0
   #     }))
@@ -152,6 +153,7 @@ phylo.betapart.core.w<-function(x, tree)
   })
   print("calculating pd for site-pairs")
   #remove the unlist from the pd.tot.pair and add the unlisting separatly to create two variables, one that is has the unlisted od and one the listed to use in the down stream analysis
+  #### Updated code chunk ####	
   pd.tot.pair.list <- pblapply(chunks, function(chunk) {   # PD of the two communities combined
 	chunkId <- chunk$chunkId
     if(canRunInParallel) {
@@ -159,7 +161,7 @@ phylo.betapart.core.w<-function(x, tree)
       print(sprintf('running %d/%d', chunkId, chunksCnt))
       sink()
     }
-	
+
     com.tot.pair <- t(apply(chunk$data,2,function(x) { # much much faster than colsums
       com[x[1],] + com[x[2],] > 0
     }))
@@ -181,11 +183,13 @@ phylo.betapart.core.w<-function(x, tree)
   com.tot.multi <- t(as.matrix(colSums(com)>0))
   print('computing PD of all communities combined')
   pd.tot.multi <- as.numeric(PhyloMeasures::pd.query(tree,com.tot.multi,standardize = T))  # PD of all communities combined using the PhyloMeasures package
-  
+  ### end of Updated code chunk ####
+	  
   # min.not.shared <- apply(pd.tot.pair-t(combn(pd,2)),1,min) # minimun (b,c)
   # max.not.shared <- apply(pd.tot.pair-t(combn(pd,2)),1,max) # maximum (b,c)
   #using a faster calculation for pairs of sites
   
+	  ### Updated code chunk ####
   #paralleling the calculation
   print("calculating minimum not shared PD")
   #copy the chunks to keep the original
@@ -210,6 +214,7 @@ phylo.betapart.core.w<-function(x, tree)
   if(canRunInParallel) {
     stopCluster(cl)
   }
+	  ### end of Updated code chunk ####
   # returning results of functional.betapart.core
   phylo.computations<-list( sumSi=sum(pd),St=pd.tot.multi, shared = dist.mat(com,shared), sum.not.shared = dist.mat(com,sum.not.shared),
                             max.not.shared = dist.mat(com,max.not.shared), min.not.shared = dist.mat(com,min.not.shared))
