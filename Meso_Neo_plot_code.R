@@ -1,3 +1,7 @@
+#### This code generates the backbone to the figure of the Danish Ancestry in the Meso-Neo project run by Morten Allentoft and Martin Sikora.
+#### The figure can be found in the preprint https://www.biorxiv.org/content/10.1101/2022.05.04.490594v2.full as figure 4.
+
+
 library(tidyverse)
 library(ggvis)
 library(ggthemes)
